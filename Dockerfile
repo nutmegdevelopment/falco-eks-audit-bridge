@@ -1,20 +1,31 @@
-FROM golang:alpine AS builder
+FROM golang:1.16-alpine AS builder
 
 WORKDIR /app
 
-# Install git.
-# Git is required for fetching the dependencies.
-RUN apk update && apk add --no-cache git
-
 COPY . .
 
-RUN go mod download && \
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o falco-eks-audit-bridge -v
+ENV USER=nutmeg
+ENV UID=10001
+RUN adduser \
+		--disabled-password \
+		--gecos "" \
+		--home "/nonexistent" \
+		--shell "/sbin/nologin" \
+		--no-create-home \
+		--uid "${UID}" \
+		"${USER}" && \
+	apk update && apk add --no-cache git ca-certificates && \
+	go mod download && \
+	go mod verify && \
+    CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build -ldflags="-w -s" -o falco-eks-audit-bridge -v
 
-FROM gcr.io/distroless/base
+FROM scratch
 
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /app/falco-eks-audit-bridge /app/falco-eks-audit-bridge
+USER nutmeg:nutmeg
 
-# Run the falco-eks-audit-bridge binary.
 ENTRYPOINT ["/app/falco-eks-audit-bridge"]
 
